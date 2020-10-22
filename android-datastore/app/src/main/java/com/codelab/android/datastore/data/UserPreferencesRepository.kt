@@ -18,8 +18,10 @@ package com.codelab.android.datastore.data
 
 import android.content.Context
 import androidx.core.content.edit
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import androidx.datastore.DataStore
+import androidx.datastore.preferences.*
+import kotlinx.coroutines.flow.*
+import java.io.IOException
 
 private const val USER_PREFERENCES_NAME = "user_preferences"
 private const val SORT_ORDER_KEY = "sort_order"
@@ -30,6 +32,8 @@ enum class SortOrder {
     BY_PRIORITY,
     BY_DEADLINE_AND_PRIORITY
 }
+
+data class UserPreferences(val showCompleted: Boolean)
 
 /**
  * Class that handles saving and retrieving user preferences
@@ -42,6 +46,33 @@ class UserPreferencesRepository private constructor(context: Context) {
     // Keep the sort order as a stream of changes
     private val _sortOrderFlow = MutableStateFlow(sortOrder)
     val sortOrderFlow: StateFlow<SortOrder> = _sortOrderFlow
+
+    private val dataStore: DataStore<Preferences> = context.createDataStore(name = "user")
+
+    private object PreferencesKeys {
+        val SHOW_COMPLETED = preferencesKey<Boolean>("show_completed")
+    }
+
+    /**
+     * As DataStore reads data from a file, IOExceptions are thrown when an error occurs while
+     * reading data. We can handle these by using the catch() Flow operator before map() and
+     * emitting emptyPreferences() in case the exception thrown was an IOException. If a different
+     * type of exception was thrown, prefer re-throwing it.
+     */
+    val userPreferencesFlow: Flow<UserPreferences> = dataStore.data
+        .catch { exception ->
+            // dataStore.data throws an IOException when an error is encountered when reading data
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            // Get our show completed value, defaulting to false if not set:
+            val showCompleted = preferences[PreferencesKeys.SHOW_COMPLETED] ?: false
+            UserPreferences(showCompleted)
+        }
 
     /**
      * Get the sort order. By default, sort order is None.
@@ -95,6 +126,12 @@ class UserPreferencesRepository private constructor(context: Context) {
     private fun updateSortOrder(sortOrder: SortOrder) {
         sharedPreferences.edit {
             putString(SORT_ORDER_KEY, sortOrder.name)
+        }
+    }
+
+    suspend fun updateShowCompleted(showCompleted: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.SHOW_COMPLETED] = showCompleted
         }
     }
 
